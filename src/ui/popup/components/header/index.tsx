@@ -1,12 +1,12 @@
 import {m} from 'malevic';
-import SiteToggle from '../site-toggle';
-import MoreToggleSettings from './more-toggle-settings';
-import WatchIcon from './watch-icon';
-import SunMoonIcon from './sun-moon-icon';
-import SystemIcon from './system-icon';
 import {Shortcut, Toggle} from '../../../controls';
 import {getLocalMessage} from '../../../../utils/locales';
-import {ExtWrapper, TabInfo} from '../../../../definitions';
+import type {ExtWrapper, TabInfo} from '../../../../definitions';
+import SunMoonIcon from '../../main-page/sun-moon-icon';
+import SystemIcon from '../../main-page/system-icon';
+import WatchIcon from '../../main-page/watch-icon';
+import SiteToggle from '../site-toggle';
+import MoreToggleSettings from './more-toggle-settings';
 
 function multiline(...lines: string[]) {
     return lines.join('\n');
@@ -33,7 +33,9 @@ function Header({data, actions, tab, onMoreToggleSettingsClick}: HeaderProps) {
 
     return (
         <header class="header">
-            <img class="header__logo" src="../assets/images/darkreader-type.svg" alt="Dark Reader" />
+            <a class="header__logo" href="https://darkreader.org/" target="_blank" rel="noopener noreferrer">
+                Dark Reader
+            </a>
             <div class="header__control header__site-toggle">
                 <SiteToggle
                     data={data}

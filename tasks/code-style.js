@@ -2,6 +2,7 @@ const fs = require('fs-extra');
 const globby = require('globby');
 const prettier = require('prettier');
 const {getDestDir} = require('./paths');
+const {createTask} = require('./task');
 const {log} = require('./utils');
 
 const options = {
@@ -17,8 +18,8 @@ const options = {
 
 const extensions = ['html', 'css', 'js'];
 
-async function codeStyle({production}) {
-    const dir = getDestDir({production});
+async function codeStyle({debug}) {
+    const dir = getDestDir({debug});
     const files = await globby(extensions.map((ext) => `${dir}/**/*.${ext}`));
     for (const file of files) {
         const code = await fs.readFile(file, 'utf8');
@@ -28,9 +29,12 @@ async function codeStyle({production}) {
         });
         if (code !== formatted) {
             await fs.outputFile(file, formatted);
-            !production && log.ok(file);
+            debug && log.ok(file);
         }
     }
 }
 
-module.exports = codeStyle;
+module.exports = createTask(
+    'code-style',
+    codeStyle,
+);

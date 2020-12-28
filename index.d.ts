@@ -3,14 +3,37 @@ declare namespace DarkReader {
      * Enables dark mode for current web page.
      * @param theme Theme options.
      * @param fixes Fixes for the generated theme.
-     * @param isIFrame This flag should be enabled if the dark mode was enabled on a parent web page (where the current page is an IFrame).
      */
-    function enable(theme: Partial<Theme>, fixes?: DynamicThemeFix, isIFrame?: boolean): void;
+    function enable(theme: Partial<Theme>, fixes?: DynamicThemeFix): void;
 
     /**
      * Disables dark mode for current web page.
      */
     function disable(): void;
+
+    /**
+     * Enables dark mode when system color scheme is dark.
+     * @param theme Theme options.
+     * @param fixes Fixes for the generated theme.
+     */
+    function auto(theme: Partial<Theme> | false, fixes?: DynamicThemeFix): void;
+
+    /**
+     * Stops watching for system color scheme.
+     * @param isEnabled Boolean `false` value.
+     */
+    function auto(isEnabled: false): void;
+
+    /**
+     * Sets a function for making CORS requests.
+     * @param fetch A fetch function.
+     */
+    function setFetchMethod(fetch: (url: string) => Promise<Response>): void;
+
+    /**
+     * Returns the generated CSS by Dark Reader as a string.
+     */
+    function exportGeneratedCSS(): Promise<string>;
 
     /**
      * Theme options.
@@ -55,6 +78,41 @@ declare namespace DarkReader {
          * Default 0.
          */
         textStroke: number;
+        /**
+         * Background color to use for dark mode.
+         * Default #181a1b
+         */
+        darkSchemeBackgroundColor: string;
+        /**
+         * Text color to use for dark mode.
+         * Default #e8e6e3
+         */
+        darkSchemeTextColor: string;
+        /**
+         * Background color to use for light mode.
+         * Default #dcdad7
+         */
+        lightSchemeBackgroundColor: string;
+        /**
+         * Text color to use for light mode.
+         * Default #181a1b
+         */
+        lightSchemeTextColor: string;
+        /**
+         * Scrollbar color
+         * Default auto
+         */
+        scrollbarColor: string;
+        /**
+         * Selection color
+         * Default auto
+         */
+        selectionColor: string;
+        /**
+         * Specifies if it has to style system controls/
+         * Default true
+         */
+        styleSystemControls: boolean;
     }
 
     /**
@@ -78,6 +136,16 @@ declare namespace DarkReader {
          * ```
          */
         css: string;
+        /**
+         * List of CSS selectors where it's inline style should not be analyzed
+         * Mostly used for color pickers
+         */
+        ignoreInlineStyle: string[];
+        /**
+         * List of CSS selectors where it's image should not be analyzed
+         * Mostly used for wrongly inverted background-images
+         */
+        ignoreImageAnalysis: string[];
     }
 }
 

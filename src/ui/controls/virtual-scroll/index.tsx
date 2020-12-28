@@ -15,14 +15,19 @@ export default function VirtualScroll(props: VirtualScrollProps) {
     const {store} = getContext();
 
     function renderContent(root: Element, scrollToIndex: number) {
+        if (root.clientWidth === 0) {
+            return;
+        }
+
         if (store.itemHeight == null) {
             const tempItem = {
                 ...props.items[0],
                 props: {
                     ...props.items[0].props,
-                    attached: null,
-                    updated: null
-                }
+                    oncreate: null,
+                    onupdate: null,
+                    onrender: null,
+                },
             };
             const tempNode = render(root, tempItem).firstElementChild;
             store.itemHeight = tempNode.getBoundingClientRect().height;
@@ -76,8 +81,7 @@ export default function VirtualScroll(props: VirtualScrollProps) {
             .map(({item, index}) => (
                 <div
                     key={index}
-                    attached={(node) => saveNodeIndex(node, index)}
-                    updated={(node) => saveNodeIndex(node, index)}
+                    onrender={(node) => saveNodeIndex(node, index)}
                     style={{
                         'left': '0',
                         'position': 'absolute',
@@ -94,21 +98,19 @@ export default function VirtualScroll(props: VirtualScrollProps) {
 
     let rootNode: Element;
     let prevScrollTop: number;
-    const rootDidMount = props.root.props.attached;
-    const rootDidUpdate = props.root.props.updated;
+    const rootDidMount = props.root.props.oncreate;
+    const rootDidUpdate = props.root.props.onupdate;
+    const rootDidRender = props.root.props.onrender;
 
     return {
         ...props.root,
         props: {
             ...props.root.props,
-            attached: (node) => {
+            oncreate: rootDidMount,
+            onupdate: rootDidUpdate,
+            onrender: (node) => {
                 rootNode = node;
-                rootDidMount && rootDidMount(rootNode);
-                renderContent(rootNode, isNaN(props.scrollToIndex) ? -1 : props.scrollToIndex);
-            },
-            updated: (node) => {
-                rootNode = node;
-                rootDidUpdate && rootDidUpdate(rootNode);
+                rootDidRender && rootDidRender(rootNode);
                 renderContent(rootNode, isNaN(props.scrollToIndex) ? -1 : props.scrollToIndex);
             },
             onscroll: () => {
@@ -120,5 +122,5 @@ export default function VirtualScroll(props: VirtualScrollProps) {
             },
         },
         children: []
-    };
+    } as Malevic.Spec;
 }

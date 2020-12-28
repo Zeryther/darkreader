@@ -3,21 +3,25 @@ import {withState, useState} from 'malevic/state';
 import {Button} from '../../controls';
 import ThemeEngines from '../../../generators/theme-engines';
 import {DEVTOOLS_DOCS_URL} from '../../../utils/links';
-import {ExtWrapper} from '../../../definitions';
+import type {ExtWrapper, TabInfo} from '../../../definitions';
+import {getCurrentThemePreset} from '../../popup/theme/utils';
+import {isFirefox} from '../../../utils/platform';
 
-type BodyProps = ExtWrapper;
+type BodyProps = ExtWrapper & {tab: TabInfo};
 
-function Body({data, actions}: BodyProps) {
+function Body({data, tab, actions}: BodyProps) {
     const {state, setState} = useState({errorText: null as string});
     let textNode: HTMLTextAreaElement;
+    const previewButtonText = data.settings.previewNewDesign ? 'Switch to old design' : 'Preview new design';
+    const {theme} = getCurrentThemePreset({data, tab, actions});
 
-    const wrapper = (data.settings.theme.engine === ThemeEngines.staticTheme
+    const wrapper = (theme.engine === ThemeEngines.staticTheme
         ? {
             header: 'Static Theme Editor',
             fixesText: data.devtools.staticThemesText,
             apply: (text) => actions.applyDevStaticThemes(text),
             reset: () => actions.resetDevStaticThemes(),
-        } : data.settings.theme.engine === ThemeEngines.cssFilter || data.settings.theme.engine === ThemeEngines.svgFilter ? {
+        } : theme.engine === ThemeEngines.cssFilter || theme.engine === ThemeEngines.svgFilter ? {
             header: 'Inversion Fix Editor',
             fixesText: data.devtools.filterFixesText,
             apply: (text) => actions.applyDevInversionFixes(text),
@@ -29,11 +33,30 @@ function Body({data, actions}: BodyProps) {
             reset: () => actions.resetDevDynamicThemeFixes(),
         });
 
-    function onTextRender(node) {
+    function onTextRender(node: HTMLTextAreaElement) {
         textNode = node;
         if (!state.errorText) {
             textNode.value = wrapper.fixesText;
         }
+        node.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const indent = ' '.repeat(4);
+                if (isFirefox) {
+                    // https://bugzilla.mozilla.org/show_bug.cgi?id=1220696
+                    const start = node.selectionStart;
+                    const end = node.selectionEnd;
+                    const before = node.value.substring(0, start);
+                    const after = node.value.substring(end);
+                    node.focus();
+                    node.value = `${before}${indent}${after}`;
+                    const cursorPos = start + indent.length;
+                    node.setSelectionRange(cursorPos, cursorPos);
+                } else {
+                    document.execCommand('insertText', false, indent);
+                }
+            }
+        });
     }
 
     async function apply() {
@@ -53,6 +76,10 @@ function Body({data, actions}: BodyProps) {
         setState({errorText: null});
     }
 
+    function toggleDesign() {
+        actions.changeSettings({previewNewDesign: !data.settings.previewNewDesign});
+    }
+
     return (
         <body>
             <header>
@@ -62,13 +89,17 @@ function Body({data, actions}: BodyProps) {
             <h3 id="sub-title">{wrapper.header}</h3>
             <textarea
                 id="editor"
-                attached={onTextRender}
-                updated={onTextRender}
+                onrender={onTextRender}
+                spellcheck="false"
+                autocorrect="off"
+                autocomplete="off"
+                autocapitalize="off"
             />
             <label id="error-text">{state.errorText}</label>
             <div id="buttons">
                 <Button onclick={reset}>Reset</Button>
                 <Button onclick={apply}>Apply</Button>
+                <Button class="preview-design-button" onclick={toggleDesign}>{previewButtonText}</Button>
             </div>
             <p id="description">
                 Read about this tool <strong><a href={DEVTOOLS_DOCS_URL} target="_blank" rel="noopener noreferrer">here</a></strong>.

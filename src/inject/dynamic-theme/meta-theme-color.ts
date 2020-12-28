@@ -1,7 +1,7 @@
 import {parse} from '../../utils/color';
 import {modifyBackgroundColor} from '../../generators/modify-colors';
 import {logWarn} from '../utils/log';
-import {FilterConfig} from '../../definitions';
+import type {FilterConfig} from '../../definitions';
 
 const metaThemeColorName = 'theme-color';
 const metaThemeColorSelector = `meta[name="${metaThemeColorName}"]`;
@@ -27,8 +27,10 @@ export function changeMetaThemeColorWhenAvailable(theme: FilterConfig) {
             observer.disconnect();
         }
         observer = new MutationObserver((mutations) => {
-            loop: for (const m of mutations) {
-                for (const node of Array.from(m.addedNodes)) {
+            loop: for (let i = 0; i < mutations.length; i++) {
+                const {addedNodes} = mutations[i];
+                for (let j = 0; j < addedNodes.length; j++) {
+                    const node = addedNodes[j];
                     if (node instanceof HTMLMetaElement && node.name === metaThemeColorName) {
                         observer.disconnect();
                         observer = null;

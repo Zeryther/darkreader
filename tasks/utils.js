@@ -1,18 +1,3 @@
-async function runTasks(tasks, options) {
-    for (const task of tasks) {
-        const name = task.name;
-        try {
-            const start = Date.now();
-            await task(options);
-            const end = Date.now();
-            log(`${name} (${(end - start).toFixed(0)}ms)`);
-        } catch (err) {
-            log.error(`${name} error\n${err.stack || err}`);
-            throw err;
-        }
-    }
-}
-
 const colors = Object.entries({
     gray: '\x1b[90m',
     green: '\x1b[32m',
@@ -21,8 +6,12 @@ const colors = Object.entries({
 }).reduce((map, [key, value]) => Object.assign(map, {[key]: (text) => `${value}${text}\x1b[0m`}), {});
 
 function logWithTime(text) {
-    const time = (new Date()).toISOString().substring(11, 19);
-    return console.log(`${colors.gray(`${time}`)} ${text}`);
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const seconds = now.getSeconds();
+    const leftpad = (n) => String(n).padStart(2, '0');
+    return console.log(`${colors.gray([hours, minutes, seconds].map(leftpad).join(':'))} ${text}`);
 }
 
 const log = Object.assign((text) => logWithTime(text), {
@@ -32,6 +21,5 @@ const log = Object.assign((text) => logWithTime(text), {
 });
 
 module.exports = {
-    runTasks,
     log,
 };

@@ -1,11 +1,13 @@
-import {ExtensionData, TabInfo, UserSettings} from '../../definitions';
+import {getURLHostOrProtocol} from '../../utils/url';
+import type {ExtensionData, TabInfo, Theme, UserSettings} from '../../definitions';
 
-export function getMockData(override = {}): ExtensionData {
+export function getMockData(override = {} as Partial<ExtensionData>): ExtensionData {
     return Object.assign({
         isEnabled: true,
         isReady: true,
         settings: {
             enabled: true,
+            presets: [],
             theme: {
                 mode: 1,
                 brightness: 110,
@@ -17,11 +19,16 @@ export function getMockData(override = {}): ExtensionData {
                 textStroke: 0,
                 engine: 'cssFilter',
                 stylesheet: '',
-            },
+                scrollbarColor: 'auto',
+                styleSystemControls: true,
+            } as Theme,
             customThemes: [],
             siteList: [],
+            siteListEnabled: [],
             applyToListedOnly: false,
             changeBrowserTheme: false,
+            enableForPDF: true,
+            enableForProtectedPages: false,
             notifyOfNews: false,
             syncSettings: true,
             automation: '',
@@ -55,7 +62,7 @@ export function getMockData(override = {}): ExtensionData {
             hasCustomFilterFixes: false,
             hasCustomStaticFixes: false,
         },
-    }, override);
+    } as ExtensionData, override);
 }
 
 export function getMockActiveTabInfo(): TabInfo {
@@ -71,10 +78,10 @@ export function createConnectorMock() {
     const data = getMockData();
     const tab = getMockActiveTabInfo();
     const connector = {
-        getData() {
+        async getData() {
             return Promise.resolve(data);
         },
-        getActiveTabInfo() {
+        async getActiveTabInfo() {
             return Promise.resolve(tab);
         },
         subscribeToChanges(callback) {
@@ -92,10 +99,11 @@ export function createConnectorMock() {
             Object.assign(data.shortcuts, {[command]: shortcut});
             listener(data);
         },
-        toggleSitePattern(pattern) {
+        toggleURL(url) {
+            const pattern = getURLHostOrProtocol(url);
             const index = data.settings.siteList.indexOf(pattern);
             if (index >= 0) {
-                data.settings.siteList.splice(pattern, 1);
+                data.settings.siteList.splice(index, 1, pattern);
             } else {
                 data.settings.siteList.push(pattern);
             }

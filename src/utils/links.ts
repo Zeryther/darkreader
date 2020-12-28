@@ -6,6 +6,7 @@ export const DONATE_URL = 'https://opencollective.com/darkreader';
 export const GITHUB_URL = 'https://github.com/darkreader/darkreader';
 export const PRIVACY_URL = 'https://darkreader.org/privacy/';
 export const TWITTER_URL = 'https://twitter.com/darkreaderapp';
+export const UNINSTALL_URL = 'https://darkreader.org/goodluck/';
 
 const helpLocales = [
     'be',
@@ -14,8 +15,12 @@ const helpLocales = [
     'en',
     'es',
     'fr',
+    'nl',
     'it',
+    'pt',
     'ru',
+    'zh-CN',
+    'zh-TW',
 ];
 
 export function getHelpURL() {

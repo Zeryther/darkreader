@@ -1,13 +1,15 @@
-import {parse, RGBA} from '../../utils/color';
+import type {RGBA} from '../../utils/color';
+import {parse, rgbToHSL, hslToString} from '../../utils/color';
 import {clamp} from '../../utils/math';
-import {isMacOS} from '../../utils/platform';
 import {getMatches} from '../../utils/text';
+import {getAbsoluteURL} from '../../utils/url';
 import {modifyBackgroundColor, modifyBorderColor, modifyForegroundColor, modifyGradientColor, modifyShadowColor, clearColorModificationCache} from '../../generators/modify-colors';
 import {cssURLRegex, getCSSURLValue, getCSSBaseBath} from './css-rules';
-import {getImageDetails, getFilteredImageDataURL, ImageDetails} from './image';
-import {getAbsoluteURL} from './url';
+import type {ImageDetails} from './image';
+import {getImageDetails, getFilteredImageDataURL, cleanImageProcessingCache} from './image';
 import {logWarn, logInfo} from '../utils/log';
-import {FilterConfig} from '../../definitions';
+import type {FilterConfig, Theme} from '../../definitions';
+import {isFirefox} from '../../utils/platform';
 
 type CSSValueModifier = (filter: FilterConfig) => string | Promise<string>;
 
@@ -20,11 +22,11 @@ export interface ModifiableCSSDeclaration {
 
 export interface ModifiableCSSRule {
     selector: string;
-    media?: string;
+    parentRule: any;
     declarations: ModifiableCSSDeclaration[];
 }
 
-export function getModifiableCSSDeclaration(property: string, value: string, rule: CSSStyleRule, isCancelled: () => boolean): ModifiableCSSDeclaration {
+export function getModifiableCSSDeclaration(property: string, value: string, rule: CSSStyleRule, ignoreImageSelectors: string[], isCancelled: () => boolean): ModifiableCSSDeclaration {
     const important = Boolean(rule && rule.style && rule.style.getPropertyPriority(property));
     const sourceValue = value;
     if (property.startsWith('--')) {
@@ -32,14 +34,15 @@ export function getModifiableCSSDeclaration(property: string, value: string, rul
     } else if (
         (property.indexOf('color') >= 0 && property !== '-webkit-print-color-adjust') ||
         property === 'fill' ||
-        property === 'stroke'
+        property === 'stroke' ||
+        property === 'stop-color'
     ) {
         const modifier = getColorModifier(property, value);
         if (modifier) {
             return {property, value: modifier, important, sourceValue};
         }
-    } else if (property === 'background-image') {
-        const modifier = getBgImageModifier(property, value, rule, isCancelled);
+    } else if (property === 'background-image' || property === 'list-style-image') {
+        const modifier = getBgImageModifier(value, rule, ignoreImageSelectors, isCancelled);
         if (modifier) {
             return {property, value: modifier, important, sourceValue};
         }
@@ -52,60 +55,123 @@ export function getModifiableCSSDeclaration(property: string, value: string, rul
     return null;
 }
 
-export function getModifiedUserAgentStyle(filter: FilterConfig, isIFrame: boolean) {
+export function getModifiedUserAgentStyle(theme: Theme, isIFrame: boolean, styleSystemControls: boolean) {
     const lines: string[] = [];
     if (!isIFrame) {
         lines.push('html {');
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 255, g: 255, b: 255}, filter)} !important;`);
+        lines.push(`    background-color: ${modifyBackgroundColor({r: 255, g: 255, b: 255}, theme)} !important;`);
         lines.push('}');
     }
-    lines.push(`${isIFrame ? '' : 'html, body, '}input, textarea, select, button {`);
-    lines.push(`    background-color: ${modifyBackgroundColor({r: 255, g: 255, b: 255}, filter)};`);
+    lines.push(`${isIFrame ? '' : 'html, body, '}${styleSystemControls ? 'input, textarea, select, button' : ''} {`);
+    lines.push(`    background-color: ${modifyBackgroundColor({r: 255, g: 255, b: 255}, theme)};`);
     lines.push('}');
-    lines.push('html, body, input, textarea, select, button {');
-    lines.push(`    border-color: ${modifyBorderColor({r: 76, g: 76, b: 76}, filter)};`);
-    lines.push(`    color: ${modifyForegroundColor({r: 0, g: 0, b: 0}, filter)};`);
+    lines.push(`html, body, ${styleSystemControls ? 'input, textarea, select, button' : ''} {`);
+    lines.push(`    border-color: ${modifyBorderColor({r: 76, g: 76, b: 76}, theme)};`);
+    lines.push(`    color: ${modifyForegroundColor({r: 0, g: 0, b: 0}, theme)};`);
     lines.push('}');
     lines.push('a {');
-    lines.push(`    color: ${modifyForegroundColor({r: 0, g: 64, b: 255}, filter)};`);
+    lines.push(`    color: ${modifyForegroundColor({r: 0, g: 64, b: 255}, theme)};`);
     lines.push('}');
     lines.push('table {');
-    lines.push(`    border-color: ${modifyBorderColor({r: 128, g: 128, b: 128}, filter)};`);
+    lines.push(`    border-color: ${modifyBorderColor({r: 128, g: 128, b: 128}, theme)};`);
     lines.push('}');
     lines.push('::placeholder {');
-    lines.push(`    color: ${modifyForegroundColor({r: 169, g: 169, b: 169}, filter)};`);
+    lines.push(`    color: ${modifyForegroundColor({r: 169, g: 169, b: 169}, theme)};`);
     lines.push('}');
-    ['::selection', '::-moz-selection'].forEach((selection) => {
-        lines.push(`${selection} {`);
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 0, g: 96, b: 212}, filter)};`);
-        lines.push(`    color: ${modifyForegroundColor({r: 255, g: 255, b: 255}, filter)};`);
-        lines.push('}');
-    });
     lines.push('input:-webkit-autofill,');
     lines.push('textarea:-webkit-autofill,');
     lines.push('select:-webkit-autofill {');
-    lines.push(`    background-color: ${modifyBackgroundColor({r: 250, g: 255, b: 189}, filter)} !important;`);
-    lines.push(`    color: ${modifyForegroundColor({r: 0, g: 0, b: 0}, filter)} !important;`);
+    lines.push(`    background-color: ${modifyBackgroundColor({r: 250, g: 255, b: 189}, theme)} !important;`);
+    lines.push(`    color: ${modifyForegroundColor({r: 0, g: 0, b: 0}, theme)} !important;`);
     lines.push('}');
-    if (!isMacOS()) {
-        lines.push('::-webkit-scrollbar {');
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 241, g: 241, b: 241}, filter)};`);
-        lines.push(`    color: ${modifyForegroundColor({r: 96, g: 96, b: 96}, filter)};`);
+    if (theme.scrollbarColor) {
+        lines.push(getModifiedScrollbarStyle(theme));
+    }
+    if (theme.selectionColor) {
+        lines.push(getModifiedSelectionStyle(theme));
+    }
+    return lines.join('\n');
+}
+
+export function getSelectionColor(theme: Theme) {
+    let backgroundColorSelection: string;
+    let foregroundColorSelection: string;
+    if (theme.selectionColor === 'auto') {
+        backgroundColorSelection = modifyBackgroundColor({r: 0, g: 96, b: 212}, {...theme, grayscale: 0});
+        foregroundColorSelection = modifyForegroundColor({r: 255, g: 255, b: 255}, {...theme, grayscale: 0});
+    } else {
+        const rgb = parse(theme.selectionColor);
+        const hsl = rgbToHSL(rgb);
+        backgroundColorSelection = theme.selectionColor;
+        if (hsl.l < 0.5) {
+            foregroundColorSelection = '#FFF';
+        } else {
+            foregroundColorSelection = '#000';
+        }
+    }
+    return {backgroundColorSelection, foregroundColorSelection};
+}
+
+function getModifiedSelectionStyle(theme: Theme) {
+    const lines: string[] = [];
+    const modifiedSelectionColor = getSelectionColor(theme);
+    const backgroundColorSelection = modifiedSelectionColor.backgroundColorSelection;
+    const foregroundColorSelection = modifiedSelectionColor.foregroundColorSelection;
+    ['::selection', '::-moz-selection'].forEach((selection) => {
+        lines.push(`${selection} {`);
+        lines.push(`    background-color: ${backgroundColorSelection} !important;`);
+        lines.push(`    color: ${foregroundColorSelection} !important;`);
         lines.push('}');
-        lines.push('::-webkit-scrollbar-thumb {');
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 193, g: 193, b: 193}, filter)};`);
-        lines.push('}');
-        lines.push('::-webkit-scrollbar-thumb:hover {');
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 166, g: 166, b: 166}, filter)};`);
-        lines.push('}');
-        lines.push('::-webkit-scrollbar-thumb:active {');;
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 96, g: 96, b: 96}, filter)};`);
-        lines.push('}');
-        lines.push('::-webkit-scrollbar-corner {');
-        lines.push(`    background-color: ${modifyBackgroundColor({r: 255, g: 255, b: 255}, filter)};`);
-        lines.push('}');
+    });
+    return lines.join('\n');
+}
+
+function getModifiedScrollbarStyle(theme: Theme) {
+    const lines: string[] = [];
+    let colorTrack: string;
+    let colorIcons: string;
+    let colorThumb: string;
+    let colorThumbHover: string;
+    let colorThumbActive: string;
+    let colorCorner: string;
+    if (theme.scrollbarColor === 'auto') {
+        colorTrack = modifyBackgroundColor({r: 241, g: 241, b: 241}, theme);
+        colorIcons = modifyForegroundColor({r: 96, g: 96, b: 96}, theme);
+        colorThumb = modifyBackgroundColor({r: 176, g: 176, b: 176}, theme);
+        colorThumbHover = modifyBackgroundColor({r: 144, g: 144, b: 144}, theme);
+        colorThumbActive = modifyBackgroundColor({r: 96, g: 96, b: 96}, theme);
+        colorCorner = modifyBackgroundColor({r: 255, g: 255, b: 255}, theme);
+    } else {
+        const rgb = parse(theme.scrollbarColor);
+        const hsl = rgbToHSL(rgb);
+        const isLight = hsl.l > 0.5;
+        const lighten = (lighter: number) => ({...hsl, l: clamp(hsl.l + lighter, 0, 1)});
+        const darken = (darker: number) => ({...hsl, l: clamp(hsl.l - darker, 0, 1)});
+        colorTrack = hslToString(darken(0.4));
+        colorIcons = hslToString(isLight ? darken(0.4) : lighten(0.4));
+        colorThumb = hslToString(hsl);
+        colorThumbHover = hslToString(lighten(0.1));
+        colorThumbActive = hslToString(lighten(0.2));
+    }
+    lines.push('::-webkit-scrollbar {');
+    lines.push(`    background-color: ${colorTrack};`);
+    lines.push(`    color: ${colorIcons};`);
+    lines.push('}');
+    lines.push('::-webkit-scrollbar-thumb {');
+    lines.push(`    background-color: ${colorThumb};`);
+    lines.push('}');
+    lines.push('::-webkit-scrollbar-thumb:hover {');
+    lines.push(`    background-color: ${colorThumbHover};`);
+    lines.push('}');
+    lines.push('::-webkit-scrollbar-thumb:active {');
+    lines.push(`    background-color: ${colorThumbActive};`);
+    lines.push('}');
+    lines.push('::-webkit-scrollbar-corner {');
+    lines.push(`    background-color: ${colorCorner};`);
+    lines.push('}');
+    if (isFirefox) {
         lines.push('* {');
-        lines.push(`    scrollbar-color: ${modifyBackgroundColor({r: 193, g: 193, b: 193}, filter)} ${modifyBackgroundColor({r: 241, g: 241, b: 241}, filter)};`);
+        lines.push(`    scrollbar-color: ${colorThumb} ${colorTrack};`);
         lines.push('}');
     }
     return lines.join('\n');
@@ -113,7 +179,7 @@ export function getModifiedUserAgentStyle(filter: FilterConfig, isIFrame: boolea
 
 export function getModifiedFallbackStyle(filter: FilterConfig, {strict}) {
     const lines: string[] = [];
-    lines.push(`html, body, ${strict ? 'body *' : 'body > *'} {`);
+    lines.push(`html, body, ${strict ? 'body :not(iframe)' : 'body > :not(iframe)'} {`);
     lines.push(`    background-color: ${modifyBackgroundColor({r: 255, g: 255, b: 255}, filter)} !important;`);
     lines.push(`    border-color: ${modifyBorderColor({r: 64, g: 64, b: 64}, filter)} !important;`);
     lines.push(`    color: ${modifyForegroundColor({r: 0, g: 0, b: 0}, filter)} !important;`);
@@ -127,6 +193,7 @@ const unparsableColors = new Set([
     'initial',
     'currentcolor',
     'none',
+    'unset',
 ]);
 
 const colorParseCache = new Map<string, RGBA>();
@@ -171,9 +238,26 @@ function getColorModifier(prop: string, value: string): string | CSSValueModifie
 
 const gradientRegex = /[\-a-z]+gradient\(([^\(\)]*(\(([^\(\)]*(\(.*?\)))*[^\(\)]*\))){0,15}[^\(\)]*\)/g;
 const imageDetailsCache = new Map<string, ImageDetails>();
-const awaitingForImageLoading = new Map<string, ((imageDetails: ImageDetails) => void)[]>();
+const awaitingForImageLoading = new Map<string, Array<(imageDetails: ImageDetails) => void>>();
 
-function getBgImageModifier(prop: string, value: string, rule: CSSStyleRule, isCancelled: () => boolean): string | CSSValueModifier {
+function shouldIgnoreImage(rule: CSSStyleRule, selectors: string[]) {
+    if (!rule || selectors.length === 0) {
+        return false;
+    }
+    if (selectors.some((s) => s === '*')) {
+        return true;
+    }
+    const ruleSelectors = rule.selectorText.split(/,\s*/g);
+    for (let i = 0; i < selectors.length; i++) {
+        const ignoredSelector = selectors[i];
+        if (ruleSelectors.some((s) => s === ignoredSelector)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function getBgImageModifier(value: string, rule: CSSStyleRule, ignoreImageSelectors: string[], isCancelled: () => boolean): string | CSSValueModifier {
     try {
         const gradients = getMatches(gradientRegex, value);
         const urls = getMatches(cssURLRegex, value);
@@ -251,6 +335,9 @@ function getBgImageModifier(prop: string, value: string, rule: CSSStyleRule, isC
                     imageDetails = imageDetailsCache.get(url);
                 } else {
                     try {
+                        if (shouldIgnoreImage(rule, ignoreImageSelectors)) {
+                            return null;
+                        }
                         if (awaitingForImageLoading.has(url)) {
                             const awaiters = awaitingForImageLoading.get(url);
                             imageDetails = await new Promise<ImageDetails>((resolve) => awaiters.push(resolve));
@@ -365,5 +452,6 @@ export function cleanModificationCache() {
     colorParseCache.clear();
     clearColorModificationCache();
     imageDetailsCache.clear();
+    cleanImageProcessingCache();
     awaitingForImageLoading.clear();
 }

@@ -1,25 +1,104 @@
-const fs = require('fs');
+const fs = require('fs-extra');
 const os = require('os');
 const rollup = require('rollup');
-const rollupPluginCommonjs = require('rollup-plugin-commonjs');
-const rollupPluginNodeResolve = require('rollup-plugin-node-resolve');
-const rollupPluginReplace = require('rollup-plugin-replace');
+const rollupPluginCommonjs = require('@rollup/plugin-commonjs');
+const rollupPluginNodeResolve = require('@rollup/plugin-node-resolve').default;
+const rollupPluginReplace = require('@rollup/plugin-replace');
 const rollupPluginTypescript = require('rollup-plugin-typescript2');
 const typescript = require('typescript');
 const {getDestDir} = require('./paths');
+const reload = require('./reload');
+const {PORT} = reload;
+const {createTask} = require('./task');
 
-function getJSFiles({production}) {
-    const dir = getDestDir({production});
-    return {
-        'src/background/index.ts': `${dir}/background/index.js`,
-        'src/inject/index.ts': `${dir}/inject/index.js`,
-        'src/ui/devtools/index.tsx': `${dir}/ui/devtools/index.js`,
-        'src/ui/popup/index.tsx': `${dir}/ui/popup/index.js`,
-        'src/ui/stylesheet-editor/index.tsx': `${dir}/ui/stylesheet-editor/index.js`,
-    };
+async function copyToFF({cwdPath, debug}) {
+    const destPath = `${getDestDir({debug})}/${cwdPath}`;
+    const ffDestPath = `${getDestDir({debug, firefox: true})}/${cwdPath}`;
+    await fs.copy(destPath, ffDestPath);
 }
 
-async function bundleJSEntry({src, dest, production}) {
+function replace(str, find, replace) {
+    return str.split(find).join(replace);
+}
+
+function patchFirefoxJS(/** @type {string} */code) {
+    code = replace(code, 'chrome.fontSettings.getFontList', `chrome['font' + 'Settings']['get' + 'Font' + 'List']`);
+    code = replace(code, 'chrome.fontSettings', `chrome['font' + 'Settings']`);
+    return code;
+}
+
+/**
+ * @typedef JSEntry
+ * @property {string} src
+ * @property {string} dest
+ * @property {string} reloadType
+ * @property {({debug}) => Promise<void>} postBuild
+ * @property {string[]} watchFiles
+ */
+
+/** @type {JSEntry[]} */
+const jsEntries = [
+    {
+        src: 'src/background/index.ts',
+        dest: 'background/index.js',
+        reloadType: reload.FULL,
+        async postBuild({debug}) {
+            const destPath = `${getDestDir({debug})}/${this.dest}`;
+            const ffDestPath = `${getDestDir({debug, firefox: true})}/${this.dest}`;
+            const code = await fs.readFile(destPath, 'utf8');
+            await fs.outputFile(ffDestPath, patchFirefoxJS(code));
+        },
+        watchFiles: null,
+    },
+    {
+        src: 'src/inject/index.ts',
+        dest: 'inject/index.js',
+        reloadType: reload.FULL,
+        async postBuild({debug}) {
+            await copyToFF({cwdPath: this.dest, debug});
+        },
+        watchFiles: null,
+    },
+    {
+        src: 'src/inject/fallback.ts',
+        dest: 'inject/fallback.js',
+        reloadType: reload.FULL,
+        async postBuild({debug}) {
+            await copyToFF({cwdPath: this.dest, debug});
+        },
+        watchFiles: null,
+    },
+    {
+        src: 'src/ui/devtools/index.tsx',
+        dest: 'ui/devtools/index.js',
+        reloadType: reload.UI,
+        async postBuild({debug}) {
+            await copyToFF({cwdPath: this.dest, debug});
+        },
+        watchFiles: null,
+    },
+    {
+        src: 'src/ui/popup/index.tsx',
+        dest: 'ui/popup/index.js',
+        reloadType: reload.UI,
+        async postBuild({debug}) {
+            await copyToFF({cwdPath: this.dest, debug});
+        },
+        watchFiles: null,
+    },
+    {
+        src: 'src/ui/stylesheet-editor/index.tsx',
+        dest: 'ui/stylesheet-editor/index.js',
+        reloadType: reload.UI,
+        async postBuild({debug}) {
+            await copyToFF({cwdPath: this.dest, debug});
+        },
+        watchFiles: null,
+    },
+];
+
+async function bundleJS(/** @type {JSEntry} */entry, {debug, watch}) {
+    const {src, dest} = entry;
     const bundle = await rollup.rollup({
         input: src,
         plugins: [
@@ -30,29 +109,72 @@ async function bundleJSEntry({src, dest, production}) {
                 tsconfig: 'src/tsconfig.json',
                 tsconfigOverride: {
                     compilerOptions: {
-                        removeComments: production ? true : false,
+                        removeComments: debug ? false : true,
+                        sourceMap: debug ? true : false,
                     },
                 },
-                clean: production ? true : false,
-                cacheRoot: production ? null : `${fs.realpathSync(os.tmpdir())}/darkreader_typescript_cache`,
+                clean: debug ? false : true,
+                cacheRoot: debug ? `${fs.realpathSync(os.tmpdir())}/darkreader_typescript_cache` : null,
             }),
             rollupPluginReplace({
-                '__DEBUG__': production ? 'false' : 'true',
+                '__DEBUG__': debug ? 'true' : 'false',
+                '__PORT__': watch ? String(PORT) : '-1',
+                '__WATCH__': watch ? 'true' : 'false',
             }),
         ].filter((x) => x)
     });
+    entry.watchFiles = bundle.watchFiles;
     await bundle.write({
-        file: dest,
+        file: `${getDestDir({debug})}/${dest}`,
         strict: true,
         format: 'iife',
-        sourcemap: production ? false : 'inline',
+        sourcemap: debug ? 'inline' : false,
     });
+    await entry.postBuild({debug});
 }
 
-async function bundleJS({production}) {
-    const files = getJSFiles({production});
-    const bundles = Object.entries(files).map(([src, dest]) => bundleJSEntry({src, dest, production}));
-    await Promise.all(bundles);
+function getWatchFiles() {
+    const watchFiles = new Set();
+    jsEntries.forEach((entry) => {
+        entry.watchFiles.forEach((file) => watchFiles.add(file));
+    });
+    return Array.from(watchFiles);
 }
 
-module.exports = bundleJS;
+/** @type {string[]} */
+let watchFiles;
+
+module.exports = createTask(
+    'bundle-js',
+    async ({debug, watch}) => await Promise.all(
+        jsEntries.map((entry) => bundleJS(entry, {debug, watch}))
+    ),
+).addWatcher(
+    () => {
+        watchFiles = getWatchFiles();
+        return watchFiles;
+    },
+    async (changedFiles, watcher) => {
+        const entries = jsEntries.filter((entry) => {
+            return changedFiles.some((changed) => {
+                return entry.watchFiles.includes(changed);
+            });
+        });
+        await Promise.all(
+            entries.map((e) => bundleJS(e, {debug: true, watch: true}))
+        );
+
+        const newWatchFiles = getWatchFiles();
+        watcher.unwatch(
+            watchFiles.filter((oldFile) => !newWatchFiles.includes(oldFile))
+        );
+        watcher.add(
+            newWatchFiles.filter((newFile) => watchFiles.includes(newFile))
+        );
+
+        const isUIOnly = entries.every((entry) => entry.reloadType === reload.UI);
+        reload({
+            type: isUIOnly ? reload.UI : reload.FULL,
+        });
+    },
+);
